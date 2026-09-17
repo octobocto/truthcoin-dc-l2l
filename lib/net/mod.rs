@@ -191,6 +191,8 @@ const fn seed_node_addrs(
         Network::Regtest => &[],
         Network::Forknet => FORKNET_SEED_NODE_ADDRS,
         Network::Alphanet => ALPHANET_SEED_NODE_ADDRS,
+        // No seed node runs on betanet yet.
+        Network::Betanet => &[],
     }
 }
 
