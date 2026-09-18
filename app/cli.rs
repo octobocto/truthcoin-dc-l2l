@@ -119,7 +119,8 @@ pub(super) struct Cli {
     /// The node also dials the seed peers of the network.
     #[arg(long = "add-peer")]
     add_peers: Vec<SeedAddress>,
-    /// Data directory for storing blockchain and wallet data
+    /// Data directory for storing blockchain data.
+    /// Wallet data is stored here by default.
     #[command(flatten)]
     datadir: DatadirArg,
     /// Log level for logs that get written to file
@@ -171,6 +172,9 @@ pub(super) struct Cli {
     /// Host name of the P2P server. Use this option one time for each name.
     #[arg(long = "server-name")]
     server_names: Vec<String>,
+    /// Data directory for storing wallet data
+    #[arg(long)]
+    wallet_dir: Option<PathBuf>,
     /// ZMQ pub/sub address
     #[cfg(feature = "zmq")]
     #[arg(default_value_t = DEFAULT_ZMQ_ADDR, long, short)]
@@ -188,12 +192,12 @@ impl Cli {
 
     pub fn get_config(self) -> anyhow::Result<Config> {
         let mainchain_grpc_url = self.mainchain_grpc_url();
+        let datadir = self.datadir.0;
         let log_dir = match self.log_dir {
             None => {
                 let version_dir_name =
                     format!("v{}", env!("CARGO_PKG_VERSION"));
-                let log_dir =
-                    self.datadir.0.join("logs").join(version_dir_name);
+                let log_dir = datadir.join("logs").join(version_dir_name);
                 Some(log_dir)
             }
             Some(log_dir) => {
@@ -213,9 +217,10 @@ impl Cli {
             .private_rpc_host
             .unwrap_or_else(|| self.rpc_host.clone());
         let private_rpc_port = self.private_rpc_port.unwrap_or(self.rpc_port);
+        let wallet_dir = self.wallet_dir.unwrap_or_else(|| datadir.clone());
         Ok(Config {
             add_peers: HashSet::from_iter(self.add_peers),
-            datadir: self.datadir.0,
+            datadir,
             file_log_level: self.file_log_level,
             headless: self.headless,
             log_dir,
@@ -230,6 +235,7 @@ impl Cli {
             rpc_host: self.rpc_host,
             rpc_port: self.rpc_port,
             server_names: HashSet::from_iter(self.server_names),
+            wallet_dir,
             #[cfg(feature = "zmq")]
             zmq_addr: self.zmq_addr,
         })
@@ -256,6 +262,7 @@ pub struct Config {
     pub rpc_host: Host,
     pub rpc_port: u16,
     pub server_names: HashSet<String>,
+    pub wallet_dir: PathBuf,
     #[cfg(feature = "zmq")]
     pub zmq_addr: SocketAddr,
 }
