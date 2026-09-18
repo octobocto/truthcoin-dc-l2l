@@ -227,7 +227,7 @@ pub fn connect_prevalidated(
     // Collect coinbase outputs
     for (vout, output) in body.coinbase.outputs.iter().enumerate() {
         let outpoint = OutPoint::Coinbase {
-            merkle_root: header.merkle_root,
+            txid: header.compute_coinbase_txid(),
             vout: vout as u32,
         };
         let filled_content = match output.content.clone() {
@@ -424,7 +424,7 @@ pub fn connect(
     }
     for (vout, output) in body.coinbase.outputs.iter().enumerate() {
         let outpoint = OutPoint::Coinbase {
-            merkle_root: header.merkle_root,
+            txid: header.compute_coinbase_txid(),
             vout: vout as u32,
         };
         let outpoint_key = OutPointKey::from_outpoint(&outpoint);
@@ -705,7 +705,7 @@ pub fn disconnect_tip(
         .rev()
         .try_for_each(|(vout, _output)| {
             let outpoint = OutPoint::Coinbase {
-                merkle_root: header.merkle_root,
+                txid: header.compute_coinbase_txid(),
                 vout: vout as u32,
             };
             let outpoint_key = OutPointKey::from_outpoint(&outpoint);
