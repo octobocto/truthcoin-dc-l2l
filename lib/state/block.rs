@@ -4,12 +4,12 @@ use rayon::prelude::*;
 use sneed::{RoTxn, RwTxn};
 
 use crate::{
+    authorization::{self, BatchVerificationContext},
     state::{Error, PrevalidatedBlock, State, amm, dutch_auction, error},
     types::{
-        AmountOverflowError, Authorization, BitAssetId, Body, FilledOutput,
+        AmountOverflowError, BitAssetId, Body, FilledOutput,
         FilledOutputContent, GetAddress as _, GetBitcoinValue as _, Header,
         InPoint, OutPoint, OutPointKey, OutputContent, SpentOutput, TxData,
-        Verify as _,
     },
 };
 
@@ -20,6 +20,7 @@ fn calculate_total_inputs(body: &Body) -> usize {
 
 /// Validate a block, returning fees
 pub fn validate(
+    batch_verification_ctxt: &BatchVerificationContext,
     state: &State,
     rotxn: &RoTxn,
     header: &Header,
@@ -93,11 +94,14 @@ pub fn validate(
             return Err(Error::WrongPubKeyForAddress);
         }
     }
-    let () = Authorization::verify_body(body).map_err(Error::Authorization)?;
+    let () =
+        authorization::verify_authorizations(batch_verification_ctxt, body)
+            .map_err(Error::Authorization)?;
     Ok(total_fees)
 }
 
 pub fn prevalidate(
+    batch_verification_ctxt: &BatchVerificationContext,
     state: &State,
     rotxn: &RoTxn,
     header: &Header,
@@ -181,7 +185,9 @@ pub fn prevalidate(
         }
     }
 
-    let () = Authorization::verify_body(body).map_err(Error::Authorization)?;
+    let () =
+        authorization::verify_authorizations(batch_verification_ctxt, body)
+            .map_err(Error::Authorization)?;
 
     let height = state.try_get_height(rotxn)?.map_or(0, |height| height + 1);
 
@@ -736,7 +742,7 @@ mod test {
     use bitcoin::hashes::Hash as _;
 
     use crate::{
-        authorization::{self, SigningKey},
+        authorization::{self, BatchVerificationContext},
         state::{
             BitAssetSeqId,
             block::{connect, disconnect_tip, validate},
@@ -786,8 +792,10 @@ mod test {
     fn disconnect_bitasset_data_update() -> anyhow::Result<()> {
         let (_temp_dir, env, state) =
             fresh_state("disconnect_bitasset_data_update")?;
-        let signing_key = SigningKey::from_bytes(&[7; 32]);
-        let verifying_key = signing_key.verifying_key().into();
+        let mut rng = rand::rng();
+        let batch_verification_ctxt = BatchVerificationContext::new(&mut rng);
+        let signing_key = authorization::test_signing_key(7);
+        let verifying_key = (&signing_key).into();
         let address = authorization::get_address(&verifying_key);
 
         let name_hash: Hash = [1; 32];
@@ -897,6 +905,7 @@ mod test {
             data: Some(TxData::BitAssetUpdate(Box::new(updates))),
         };
         let authorized_update = authorization::authorize(
+            &mut rng,
             &[(address, &signing_key), (address, &signing_key)],
             update_tx,
         )?;
@@ -909,7 +918,13 @@ mod test {
 
         {
             let rotxn = env.read_txn()?;
-            validate(&state, &rotxn, &update_header, &update_body)?;
+            validate(
+                &batch_verification_ctxt,
+                &state,
+                &rotxn,
+                &update_header,
+                &update_body,
+            )?;
         }
         {
             let mut rwtxn = env.write_txn()?;

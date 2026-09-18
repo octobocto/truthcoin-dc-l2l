@@ -16,6 +16,7 @@ use tonic::transport::Channel;
 
 use crate::{
     archive::Archive,
+    authorization::{BatchVerificationContext, rand_core::CryptoRng},
     mempool::{self, MemPool},
     net::{DialSeedsHandle, Net, Peer},
     state::{
@@ -59,6 +60,7 @@ pub struct BroadcastResult {
 #[derive(Clone)]
 pub struct Node<MainchainTransport = Channel> {
     archive: Archive,
+    batch_verification_ctxt: BatchVerificationContext,
     cusf_mainchain: mainchain::ValidatorClient<MainchainTransport>,
     cusf_mainchain_wallet:
         Option<Arc<Mutex<mainchain::WalletClient<MainchainTransport>>>>,
@@ -78,7 +80,7 @@ where
     MainchainTransport: proto::Transport,
 {
     #[allow(clippy::too_many_arguments)]
-    pub async fn new(
+    pub async fn new<R>(
         bind_addr: SocketAddr,
         datadir: &Path,
         magic_bytes_override: Option<crate::net::peer_message::MagicBytes>,
@@ -89,10 +91,12 @@ where
         cusf_mainchain_wallet: Option<
             mainchain::WalletClient<MainchainTransport>,
         >,
+        rng: &mut R,
         runtime: &tokio::runtime::Runtime,
         #[cfg(feature = "zmq")] zmq_addr: SocketAddr,
     ) -> Result<Self, Error>
     where
+        R: CryptoRng,
         mainchain::ValidatorClient<MainchainTransport>: Clone,
         MainchainTransport: Send + 'static,
         <MainchainTransport as tonic::client::GrpcService<
@@ -145,10 +149,12 @@ where
                 archive.clone(),
                 cusf_mainchain.clone(),
             );
+        let batch_verification_ctxt = BatchVerificationContext::new(rng);
         let (net, peer_info_rx, dial_seeds) = Net::new(
             runtime.handle(),
             &env,
             archive.clone(),
+            batch_verification_ctxt,
             magic_bytes_override,
             network,
             state.clone(),
@@ -173,6 +179,7 @@ where
         );
         Ok(Self {
             archive,
+            batch_verification_ctxt,
             cusf_mainchain,
             cusf_mainchain_wallet,
             _dial_seeds: Arc::new(dial_seeds),
@@ -477,7 +484,11 @@ where
         let txid = transaction.transaction.txid();
         let stored = {
             let mut rwtxn = self.env.write_txn()?;
-            self.state.validate_transaction(&rwtxn, transaction)?;
+            self.state.validate_transaction(
+                &rwtxn,
+                &self.batch_verification_ctxt,
+                transaction,
+            )?;
             let stored = self
                 .mempool
                 .transactions
@@ -737,7 +748,11 @@ where
             }
             if self
                 .state
-                .validate_transaction(&rwtxn, &transaction)
+                .validate_transaction(
+                    &rwtxn,
+                    &self.batch_verification_ctxt,
+                    &transaction,
+                )
                 .is_err()
             {
                 self.mempool

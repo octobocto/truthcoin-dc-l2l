@@ -21,7 +21,10 @@ use thiserror::Error;
 use tokio_stream::{StreamMap, wrappers::WatchStream};
 
 use crate::{
-    authorization::{self, Authorization, Signature, get_address},
+    authorization::{
+        self, Authorization, Signature, SigningKey, get_address,
+        rand_core::CryptoRng,
+    },
     types::{
         Address, AmountOverflowError, AmountUnderflowError, AssetId,
         AuthorizedTransaction, BitAssetData, BitAssetId, BitcoinOutputContent,
@@ -32,6 +35,13 @@ use crate::{
     },
     util::Watchable,
 };
+
+/// Reinterpret 32 bip32 secret bytes as a Ristretto255 signing key.
+fn signing_key_from_secret_bytes(bytes: [u8; 32]) -> SigningKey {
+    let scalar = curve25519_dalek::Scalar::from_bytes_mod_order(bytes);
+    SigningKey::from_scalar(scalar)
+        .expect("expected secret scalar to be non-zero")
+}
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize, utoipa::ToSchema)]
 pub struct Balance {
@@ -314,14 +324,15 @@ impl Wallet {
         &self,
         rotxn: &RoTxn,
         index: u32,
-    ) -> Result<ed25519_dalek::SigningKey, Error> {
+    ) -> Result<SigningKey, Error> {
         let master_xpriv = self.get_master_xpriv(rotxn)?;
         let derivation_path = DerivationPath::master()
             .child(ChildNumber::Hardened { index: 0 })
             .child(ChildNumber::Normal { index });
         let xpriv = master_xpriv
             .derive_priv(&bitcoin::key::Secp256k1::new(), &derivation_path)?;
-        let signing_key = xpriv.private_key.secret_bytes().into();
+        let signing_key =
+            signing_key_from_secret_bytes(xpriv.private_key.secret_bytes());
         Ok(signing_key)
     }
 
@@ -330,14 +341,14 @@ impl Wallet {
         &self,
         rotxn: &RoTxn,
         address: &Address,
-    ) -> Result<ed25519_dalek::SigningKey, Error> {
+    ) -> Result<SigningKey, Error> {
         let addr_idx = self
             .address_to_index
             .try_get(rotxn, address)?
             .ok_or(Error::AddressDoesNotExist { address: *address })?;
         let signing_key = self.get_tx_signing_key(rotxn, addr_idx)?;
         // sanity check that signing key corresponds to address
-        assert_eq!(*address, get_address(&signing_key.verifying_key().into()));
+        assert_eq!(*address, get_address(&(&signing_key).into()));
         Ok(signing_key)
     }
 
@@ -345,14 +356,15 @@ impl Wallet {
         &self,
         rotxn: &RoTxn,
         index: u32,
-    ) -> Result<ed25519_dalek::SigningKey, Error> {
+    ) -> Result<SigningKey, Error> {
         let master_xpriv = self.get_master_xpriv(rotxn)?;
         let derivation_path = DerivationPath::master()
             .child(ChildNumber::Hardened { index: 2 })
             .child(ChildNumber::Normal { index });
         let xpriv = master_xpriv
             .derive_priv(&bitcoin::key::Secp256k1::new(), &derivation_path)?;
-        let signing_key = xpriv.private_key.secret_bytes().into();
+        let signing_key =
+            signing_key_from_secret_bytes(xpriv.private_key.secret_bytes());
         Ok(signing_key)
     }
 
@@ -361,14 +373,14 @@ impl Wallet {
         &self,
         rotxn: &RoTxn,
         vk: &VerifyingKey,
-    ) -> Result<ed25519_dalek::SigningKey, Error> {
+    ) -> Result<SigningKey, Error> {
         let vk_idx = self
             .vk_to_index
             .try_get(rotxn, vk)?
             .ok_or_else(|| Box::new(VkDoesNotExistError { vk: *vk }))?;
         let signing_key = self.get_message_signing_key(rotxn, vk_idx)?;
         // sanity check that signing key corresponds to vk
-        assert_eq!(*vk, signing_key.verifying_key().into());
+        assert_eq!(*vk, (&signing_key).into());
         Ok(signing_key)
     }
 
@@ -382,7 +394,7 @@ impl Wallet {
             .map(|(idx, _)| idx + 1)
             .unwrap_or(0);
         let tx_signing_key = self.get_tx_signing_key(&txn, next_index)?;
-        let address = get_address(&tx_signing_key.verifying_key().into());
+        let address = get_address(&(&tx_signing_key).into());
         self.index_to_address.put(&mut txn, &next_index, &address)?;
         self.address_to_index.put(&mut txn, &address, &next_index)?;
         txn.commit()?;
@@ -461,7 +473,7 @@ impl Wallet {
             .map(|(idx, _)| idx + 1)
             .unwrap_or(0);
         let signing_key = self.get_message_signing_key(&txn, next_index)?;
-        let vk = signing_key.verifying_key().into();
+        let vk = (&signing_key).into();
         self.index_to_vk.put(&mut txn, &next_index, &vk)?;
         self.vk_to_index.put(&mut txn, &vk, &next_index)?;
         txn.commit()?;
@@ -738,9 +750,11 @@ impl Wallet {
         let name_hash: Hash = blake3::hash(plain_name.as_bytes()).into();
         let bitasset_id = BitAssetId(name_hash);
         // hmac(secret, name_hash)
-        let nonce =
-            blake3::keyed_hash(reservation_signing_key.as_bytes(), &name_hash)
-                .into();
+        let nonce = blake3::keyed_hash(
+            &reservation_signing_key.to_scalar().to_bytes(),
+            &name_hash,
+        )
+        .into();
         // hmac(nonce, name_hash)
         let commitment = blake3::keyed_hash(&nonce, &name_hash).into();
         // store reservation data
@@ -810,7 +824,7 @@ impl Wallet {
                     .get_tx_signing_key_for_addr(&rotxn, &reservation_addr)?;
                 // hmac(secret, name_hash)
                 let nonce = blake3::keyed_hash(
-                    reservation_signing_key.as_bytes(),
+                    &reservation_signing_key.to_scalar().to_bytes(),
                     &name_hash,
                 )
                 .into();
@@ -1630,10 +1644,14 @@ impl Wallet {
         Ok(addresses)
     }
 
-    pub fn authorize(
+    pub fn authorize<R>(
         &self,
+        mut rng: R,
         transaction: Transaction,
-    ) -> Result<AuthorizedTransaction, Error> {
+    ) -> Result<AuthorizedTransaction, Error>
+    where
+        R: CryptoRng,
+    {
         let rotxn = self.env.read_txn()?;
         let mut authorizations = vec![];
         for input in &transaction.inputs {
@@ -1658,10 +1676,13 @@ impl Wallet {
                     address: spent_utxo.address,
                 })?;
             let tx_signing_key = self.get_tx_signing_key(&rotxn, index)?;
-            let signature =
-                crate::authorization::sign_tx(&tx_signing_key, &transaction)?;
+            let signature = crate::authorization::sign_tx(
+                &mut rng,
+                &tx_signing_key,
+                &transaction,
+            )?;
             authorizations.push(Authorization {
-                verifying_key: tx_signing_key.verifying_key().into(),
+                verifying_key: (&tx_signing_key).into(),
                 signature,
             });
         }
@@ -1694,29 +1715,37 @@ impl Wallet {
         Ok(res)
     }
 
-    pub fn sign_arbitrary_msg(
+    pub fn sign_arbitrary_msg<R>(
         &self,
+        rng: R,
         verifying_key: &VerifyingKey,
         msg: &str,
-    ) -> Result<Signature, Error> {
+    ) -> Result<Signature, Error>
+    where
+        R: CryptoRng,
+    {
         use authorization::{Dst, sign};
         let rotxn = self.env.read_txn()?;
         let signing_key =
             self.get_message_signing_key_for_vk(&rotxn, verifying_key)?;
-        let res = sign(&signing_key, Dst::Arbitrary, msg.as_bytes());
+        let res = sign(rng, &signing_key, Dst::Arbitrary, msg.as_bytes());
         Ok(res)
     }
 
-    pub fn sign_arbitrary_msg_as_addr(
+    pub fn sign_arbitrary_msg_as_addr<R>(
         &self,
+        rng: R,
         address: &Address,
         msg: &str,
-    ) -> Result<Authorization, Error> {
+    ) -> Result<Authorization, Error>
+    where
+        R: CryptoRng,
+    {
         use authorization::{Dst, sign};
         let rotxn = self.env.read_txn()?;
         let signing_key = self.get_tx_signing_key_for_addr(&rotxn, address)?;
-        let signature = sign(&signing_key, Dst::Arbitrary, msg.as_bytes());
-        let verifying_key = signing_key.verifying_key().into();
+        let signature = sign(rng, &signing_key, Dst::Arbitrary, msg.as_bytes());
+        let verifying_key = (&signing_key).into();
         Ok(Authorization {
             verifying_key,
             signature,

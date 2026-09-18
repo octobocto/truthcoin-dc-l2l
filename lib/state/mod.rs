@@ -9,14 +9,14 @@ use serde::{Deserialize, Serialize};
 use sneed::{DatabaseUnique, RoDatabaseUnique, RoTxn, RwTxn, UnitKey};
 
 use crate::{
-    authorization::Authorization,
+    authorization::{self, BatchVerificationContext},
     types::{
         Address, AmountOverflowError, Authorized, AuthorizedTransaction,
         BitAssetId, BlockHash, BlockIndexEvents, Body, FilledOutput,
         FilledTransaction, GetAddress as _, GetBitcoinValue as _, Header,
         InPoint, M6id, OutPoint, OutPointKey, SpentOutput, Transaction, TxData,
-        VERSION, Verify as _, Version, WithdrawalBundle,
-        WithdrawalBundleStatus, proto::mainchain::TwoWayPegData,
+        VERSION, Version, WithdrawalBundle, WithdrawalBundleStatus,
+        proto::mainchain::TwoWayPegData,
     },
     util::Watchable,
 };
@@ -676,6 +676,7 @@ impl State {
     pub fn validate_transaction(
         &self,
         rotxn: &RoTxn,
+        batch_verification_ctxt: &BatchVerificationContext,
         transaction: &AuthorizedTransaction,
     ) -> Result<bitcoin::Amount, Error> {
         let filled_transaction =
@@ -689,8 +690,11 @@ impl State {
                 return Err(Error::WrongPubKeyForAddress);
             }
         }
-        let () = Authorization::verify_transaction(transaction)
-            .map_err(Error::Authorization)?;
+        let () = authorization::verify_authorized_transaction(
+            batch_verification_ctxt,
+            transaction,
+        )
+        .map_err(Error::Authorization)?;
         let fee =
             self.validate_filled_transaction(rotxn, &filled_transaction)?;
         Ok(fee)
@@ -764,10 +768,11 @@ impl State {
     pub fn validate_block(
         &self,
         rotxn: &RoTxn,
+        batch_verification_ctxt: &BatchVerificationContext,
         header: &Header,
         body: &Body,
     ) -> Result<bitcoin::Amount, Error> {
-        block::validate(self, rotxn, header, body)
+        block::validate(batch_verification_ctxt, self, rotxn, header, body)
     }
 
     pub fn connect_block(
@@ -807,10 +812,11 @@ impl State {
     pub fn prevalidate_block(
         &self,
         rotxn: &RoTxn,
+        batch_verification_ctxt: &BatchVerificationContext,
         header: &Header,
         body: &Body,
     ) -> Result<PrevalidatedBlock, Error> {
-        block::prevalidate(self, rotxn, header, body)
+        block::prevalidate(batch_verification_ctxt, self, rotxn, header, body)
     }
 
     pub fn connect_prevalidated_block(
@@ -826,10 +832,16 @@ impl State {
     pub fn apply_block(
         &self,
         rwtxn: &mut RwTxn,
+        batch_verification_ctxt: &BatchVerificationContext,
         header: &Header,
         body: &Body,
     ) -> Result<(), Error> {
-        let prevalidated = self.prevalidate_block(rwtxn, header, body)?;
+        let prevalidated = self.prevalidate_block(
+            rwtxn,
+            batch_verification_ctxt,
+            header,
+            body,
+        )?;
         self.connect_prevalidated_block(rwtxn, header, body, prevalidated)?;
         Ok(())
     }
@@ -847,10 +859,9 @@ impl Watchable<()> for State {
 #[cfg(test)]
 mod test {
     use bitcoin::hashes::Hash as _;
-    use ed25519_dalek::SigningKey;
 
     use crate::{
-        authorization,
+        authorization::{self, BatchVerificationContext},
         state::{Error, State, error},
         types::{
             Address, AuthorizedTransaction, BitAssetData, BitAssetId,
@@ -969,8 +980,10 @@ mod test {
     fn validate_transaction_rejects_missing_authorization() -> anyhow::Result<()>
     {
         let (_temp_dir, env, state) = fresh_state("auth_count")?;
-        let signing_key = SigningKey::from_bytes(&[1u8; 32]);
-        let verifying_key: VerifyingKey = signing_key.verifying_key().into();
+        let mut rng = rand::rng();
+        let batch_verification_ctxt = BatchVerificationContext::new(&mut rng);
+        let signing_key = authorization::test_signing_key(1);
+        let verifying_key = VerifyingKey::from(&signing_key);
         let address = authorization::get_address(&verifying_key);
         let outpoint = fund(&env, &state, address, 1000);
 
@@ -986,7 +999,11 @@ mod test {
         };
         let rotxn = env.read_txn()?;
         let err = state
-            .validate_transaction(&rotxn, &unauthorized)
+            .validate_transaction(
+                &rotxn,
+                &batch_verification_ctxt,
+                &unauthorized,
+            )
             .expect_err("tx with no authorizations must be rejected");
         anyhow::ensure!(
             matches!(
@@ -999,10 +1016,13 @@ mod test {
         );
 
         // The same transaction with a valid authorization is accepted.
-        let authorized =
-            authorization::authorize(&[(address, &signing_key)], transaction)?;
+        let authorized = authorization::authorize(
+            &mut rng,
+            &[(address, &signing_key)],
+            transaction,
+        )?;
         state
-            .validate_transaction(&rotxn, &authorized)
+            .validate_transaction(&rotxn, &batch_verification_ctxt, &authorized)
             .expect("correctly authorized tx should validate");
         Ok(())
     }
