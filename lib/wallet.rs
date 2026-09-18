@@ -27,8 +27,8 @@ use crate::{
         AuthorizedTransaction, BitAssetData, BitAssetId, BitcoinOutputContent,
         DutchAuctionId, DutchAuctionParams, EncryptionPubKey, FilledOutput,
         GetBitcoinValue, Hash, InPoint, OutPoint, Output, OutputContent,
-        SpentOutput, Transaction, TxData, VERSION, VerifyingKey, Version,
-        WithdrawalOutputContent, keys::Ecies,
+        SpentOutput, Transaction, TxData, TxInputs, VERSION, VerifyingKey,
+        Version, WithdrawalOutputContent, keys::Ecies,
     },
     util::Watchable,
 };
@@ -531,7 +531,7 @@ impl Wallet {
     ) -> Result<Transaction, Error> {
         let (total, coins) = self.select_bitcoins(fee)?;
         let change = total - fee;
-        let inputs = coins.into_keys().collect();
+        let inputs: TxInputs = coins.into_keys().collect();
         let outputs = vec![Output::new(
             self.get_new_address()?,
             OutputContent::Bitcoin(BitcoinOutputContent(change)),
@@ -561,7 +561,7 @@ impl Wallet {
                 .ok_or(AmountOverflowError)?,
         )?;
         let change = total - value - fee - main_fee;
-        let inputs = coins.into_keys().collect();
+        let inputs: TxInputs = coins.into_keys().collect();
         let outputs = vec![
             Output::new(
                 self.get_new_address()?,
@@ -633,7 +633,7 @@ impl Wallet {
             value.checked_add(fee).ok_or(AmountOverflowError)?,
         )?;
         let change = total - value - fee;
-        let inputs = coins.into_keys().collect();
+        let inputs: TxInputs = coins.into_keys().collect();
         if change != Amount::ZERO {
             outputs.push(Output::new(
                 self.get_new_address()?,

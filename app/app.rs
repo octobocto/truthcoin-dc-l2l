@@ -29,6 +29,8 @@ use crate::cli::Config;
 pub enum Error {
     #[error(transparent)]
     AmountOverflow(#[from] AmountOverflowError),
+    #[error(transparent)]
+    ComputeMerkleRoot(#[from] plain_bitassets::types::ComputeMerkleRootError),
     #[error("CUSF mainchain proto error")]
     CusfMainchain(#[from] plain_bitassets::types::proto::Error),
     #[error("io error")]
@@ -475,12 +477,14 @@ impl App {
                     )),
                 )],
             };
-            let merkle_root = Body::compute_merkle_root(
-                &coinbase,
-                &txs.iter()
-                    .map(|tx| tx.transaction.transaction.clone())
-                    .collect::<Vec<_>>(),
-            );
+            let coinbase = types::Coinbase {
+                memo: Vec::new(),
+                outputs: coinbase.into(),
+            };
+            let filled_txs: Vec<_> =
+                txs.iter().map(|tx| &tx.transaction).collect();
+            let merkle_root =
+                Body::compute_merkle_root(&coinbase, filled_txs.as_slice())?;
             let body = Body::new(
                 txs.into_iter().map(|tx| tx.into()).collect(),
                 coinbase,
@@ -499,8 +503,9 @@ impl App {
             });
             (bribe, header, body, tx_fees)
         } else {
-            let coinbase = Vec::new();
-            let merkle_root = Body::compute_merkle_root(&coinbase, &[]);
+            let coinbase = types::Coinbase::default();
+            let merkle_root =
+                Body::compute_merkle_root(&coinbase, Body::NO_FILLED_TXS)?;
             let body = Body::new(Vec::new(), coinbase);
             let header = types::Header {
                 merkle_root,

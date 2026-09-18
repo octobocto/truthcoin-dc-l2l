@@ -37,6 +37,7 @@ const-hex = { workspace = true, features = ["serde"] }
 hex-literal = { workspace = true }
 itertools = { workspace = true }
 jsonrpsee = { workspace = true }
+merkle-cbt = { workspace = true }
 nonempty = { workspace = true, features = ["serialize"] }
 num = { workspace = true }
 parking_lot = { workspace = true }

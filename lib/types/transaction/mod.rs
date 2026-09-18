@@ -10,7 +10,7 @@ use borsh::{self, BorshDeserialize, BorshSerialize};
 use heed::{BoxedError, BytesDecode, BytesEncode};
 use itertools::Itertools;
 use serde::{Deserialize, Serialize};
-use utoipa::{PartialSchema, ToSchema};
+use utoipa::ToSchema;
 
 use crate::{
     authorization::Authorization,
@@ -19,15 +19,18 @@ use crate::{
         GetBitcoinValue,
         address::Address,
         hashes::{
-            self, AssetId, BitAssetId, DutchAuctionId, Hash, M6id, MerkleRoot,
-            Txid,
+            self, AssetId, BitAssetId, DutchAuctionId, Hash, InputsMerkleRoot,
+            M6id, MerkleRoot, OutputsMerkleRoot, TxMerkleRoot, Txid,
         },
         serde_hexstr_human_readable,
     },
 };
 
 pub mod error;
-mod output;
+pub mod inputs;
+pub(crate) mod output;
+pub mod outputs;
+pub use inputs::Inputs;
 pub use output::{
     AssetContent as AssetOutputContent, AssetOutput,
     BitcoinContent as BitcoinOutputContent, BitcoinOutput,
@@ -35,6 +38,7 @@ pub use output::{
     FilledOutput, Output, Pointed as PointedOutput, SpentOutput,
     WithdrawalContent as WithdrawalOutputContent,
 };
+pub use outputs::Outputs;
 
 fn borsh_serialize_bitcoin_outpoint<W>(
     block_hash: &bitcoin::OutPoint,
@@ -300,7 +304,7 @@ mod test {
         };
         let withdrawal_tx = |funding| FilledTransaction {
             transaction: Transaction {
-                outputs: vec![withdrawal.clone()],
+                outputs: vec![withdrawal.clone()].into(),
                 ..Default::default()
             },
             spent_utxos: vec![value_output(funding)],
@@ -334,9 +338,9 @@ pub enum InPoint {
     },
 }
 
-pub type TxInputs = Vec<OutPoint>;
+pub type TxInputs = inputs::Inputs;
 
-pub type TxOutputs = Vec<Output>;
+pub type TxOutputs = outputs::Outputs;
 
 /// Parameters of a Dutch Auction
 #[derive(
@@ -557,9 +561,7 @@ pub struct DutchAuctionCollect {
     BorshSerialize, Clone, Debug, Default, Deserialize, Serialize, ToSchema,
 )]
 pub struct Transaction {
-    #[schema(schema_with = TxInputs::schema)]
     pub inputs: TxInputs,
-    #[schema(schema_with = TxOutputs::schema)]
     pub outputs: TxOutputs,
     #[serde(with = "serde_hexstr_human_readable")]
     #[schema(value_type = String)]
@@ -568,10 +570,13 @@ pub struct Transaction {
 }
 
 impl Transaction {
-    pub fn new(inputs: TxInputs, outputs: TxOutputs) -> Self {
+    pub fn new(
+        inputs: impl Into<TxInputs>,
+        outputs: impl Into<TxOutputs>,
+    ) -> Self {
         Self {
-            inputs,
-            outputs,
+            inputs: inputs.into(),
+            outputs: outputs.into(),
             memo: Vec::new(),
             data: None,
         }
@@ -713,6 +718,22 @@ impl Transaction {
 
     pub fn txid(&self) -> Txid {
         hashes::hash_with_scratch_buffer(self).into()
+    }
+
+    /// Commitment to the inputs and the outputs of this transaction.
+    pub(crate) fn compute_merkle_root(
+        &self,
+    ) -> Result<TxMerkleRoot, outputs::error::ComputeMerkleRoot> {
+        #[derive(BorshSerialize)]
+        struct HashComponents {
+            inputs_commitment: InputsMerkleRoot,
+            outputs_commitment: OutputsMerkleRoot,
+        }
+        let res = hashes::hash_with_scratch_buffer(&HashComponents {
+            inputs_commitment: self.inputs.compute_merkle_root(),
+            outputs_commitment: self.outputs.compute_merkle_root()?,
+        });
+        Ok(res.into())
     }
 
     /// Canonical size in bytes. The canonical encoding is the form that the

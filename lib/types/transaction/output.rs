@@ -33,7 +33,7 @@ impl SerializeAs<bitcoin::Amount> for BitcoinAmountSats {
     }
 }
 
-fn borsh_serialize_bitcoin_amount<W>(
+pub(crate) fn borsh_serialize_bitcoin_amount<W>(
     bitcoin_amount: &bitcoin::Amount,
     writer: &mut W,
 ) -> borsh::io::Result<()>
@@ -993,6 +993,12 @@ impl<Content> Output<Content> {
 pub type TxOutput = Output;
 
 impl TxOutput {
+    /// Canonical size in bytes. The canonical encoding is the form that the
+    /// merkle root commits to.
+    pub(crate) fn canonical_size(&self) -> borsh::io::Result<u64> {
+        borsh::object_length(self).map(|size| size as u64)
+    }
+
     /// `true` if the output content corresponds to a Bitcoin Value
     pub fn is_bitcoin(&self) -> bool {
         self.content.is_bitcoin()
