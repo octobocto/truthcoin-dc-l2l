@@ -62,8 +62,8 @@ pub struct Node<MainchainTransport = Channel> {
     archive: Archive,
     batch_verification_ctxt: BatchVerificationContext,
     cusf_mainchain: mainchain::ValidatorClient<MainchainTransport>,
-    cusf_mainchain_wallet:
-        Option<Arc<Mutex<mainchain::WalletClient<MainchainTransport>>>>,
+    cusf_mainchain_block_producer:
+        Option<Arc<Mutex<mainchain::BlockProducerClient<MainchainTransport>>>>,
     _dial_seeds: Arc<DialSeedsHandle>,
     env: sneed::Env<heed::WithoutTls>,
     mainchain_task: MainchainTaskHandle,
@@ -88,8 +88,8 @@ where
         add_peers: HashSet<SeedAddress>,
         server_names: HashSet<String>,
         cusf_mainchain: mainchain::ValidatorClient<MainchainTransport>,
-        cusf_mainchain_wallet: Option<
-            mainchain::WalletClient<MainchainTransport>,
+        cusf_mainchain_block_producer: Option<
+            mainchain::BlockProducerClient<MainchainTransport>,
         >,
         rng: &mut R,
         runtime: &tokio::runtime::Runtime,
@@ -162,8 +162,8 @@ where
             add_peers,
             server_names,
         )?;
-        let cusf_mainchain_wallet =
-            cusf_mainchain_wallet.map(|wallet| Arc::new(Mutex::new(wallet)));
+        let cusf_mainchain_block_producer = cusf_mainchain_block_producer
+            .map(|block_producer| Arc::new(Mutex::new(block_producer)));
         let net_task = NetTaskHandle::new(
             runtime,
             env.clone(),
@@ -181,7 +181,7 @@ where
             archive,
             batch_verification_ctxt,
             cusf_mainchain,
-            cusf_mainchain_wallet,
+            cusf_mainchain_block_producer,
             _dial_seeds: Arc::new(dial_seeds),
             env,
             mainchain_task,
@@ -1039,19 +1039,27 @@ where
             ));
             self.zmq_pub_handler.tx.unbounded_send(zmq_msg).unwrap();
         }
-        if let Some((bundle, _)) = bundle
-            && let Some(cusf_mainchain_wallet) =
-                self.cusf_mainchain_wallet.as_ref()
-        {
+        if let Some((bundle, _)) = bundle {
             let m6id = bundle.compute_m6id();
+            if let Some(cusf_mainchain_block_producer) =
+                self.cusf_mainchain_block_producer.as_ref()
             {
-                let mut cusf_mainchain_wallet_lock =
-                    cusf_mainchain_wallet.lock().await;
-                let () = cusf_mainchain_wallet_lock
-                    .broadcast_withdrawal_bundle(bundle.tx())
-                    .await?;
+                {
+                    let mut cusf_mainchain_block_producer_lock =
+                        cusf_mainchain_block_producer.lock().await;
+                    let () = cusf_mainchain_block_producer_lock
+                        .propose_withdrawal_bundle(bundle.tx())
+                        .await?;
+                }
+                tracing::trace!(%m6id, "Proposed withdrawal bundle");
+            } else {
+                tracing::warn!(
+                    %m6id,
+                    "Withdrawal bundle is pending, but the mainchain node \
+                     does not serve BlockProducerService, so the bundle \
+                     cannot be proposed and the withdrawal cannot complete",
+                );
             }
-            tracing::trace!(%m6id, "Broadcast withdrawal bundle");
         }
         Ok(true)
     }

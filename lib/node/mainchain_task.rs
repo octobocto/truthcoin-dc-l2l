@@ -843,6 +843,7 @@ mod test {
                             work: Some(ConsensusHex::encode(
                                 &info.work.to_le_bytes(),
                             )),
+                            timestamp: 0,
                         }),
                         block_info: Some(generated::BlockInfo::default()),
                     }
