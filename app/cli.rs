@@ -242,6 +242,71 @@ impl Cli {
     }
 }
 
+impl Config {
+    /// Log all fields at info level
+    #[track_caller]
+    pub fn log_all_fields(&self, msg: &str) {
+        let Self {
+            add_peers,
+            datadir,
+            file_log_level,
+            headless,
+            log_dir,
+            log_level,
+            mainchain_grpc_url,
+            mnemonic_seed_phrase_path,
+            net_addr,
+            network,
+            network_magic_override,
+            private_rpc_host,
+            private_rpc_port,
+            rpc_host,
+            rpc_port,
+            server_names,
+            wallet_dir,
+            #[cfg(feature = "zmq")]
+            zmq_addr,
+        } = self;
+        #[cfg(feature = "zmq")]
+        let zmq_addr = Some(zmq_addr.to_string());
+        #[cfg(not(feature = "zmq"))]
+        let zmq_addr: Option<String> = None;
+        let add_peers = std::fmt::from_fn(|f| {
+            f.debug_set()
+                .entries(add_peers.iter().map(|peer_addr| {
+                    std::fmt::from_fn(|f| std::fmt::Display::fmt(peer_addr, f))
+                }))
+                .finish()
+        });
+        tracing::info!(
+            %add_peers,
+            datadir = %datadir.display(),
+            %file_log_level,
+            %headless,
+            log_dir = log_dir.as_ref().map(|path|
+                tracing::field::display(path.display())
+            ),
+            %log_level,
+            %mainchain_grpc_url,
+            mnemonic_seed_phrase_path = mnemonic_seed_phrase_path.as_ref()
+                .map(|path| tracing::field::display(path.display())),
+            %net_addr,
+            %network,
+            network_magic_override = network_magic_override.map(|magic|
+                tracing::field::display(const_hex::encode(magic))
+            ),
+            %private_rpc_host,
+            %private_rpc_port,
+            %rpc_host,
+            %rpc_port,
+            ?server_names,
+            wallet_dir = %wallet_dir.display(),
+            zmq_addr = zmq_addr.as_deref(),
+            msg,
+        )
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct Config {
     pub add_peers: HashSet<SeedAddress>,

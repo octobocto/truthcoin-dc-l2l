@@ -206,6 +206,7 @@ fn main() -> anyhow::Result<()> {
         config.log_dir.as_deref(),
         config.log_level,
     )?;
+    let () = config.log_all_fields("Loaded config");
     let (app_tx, app_rx) = oneshot::channel::<anyhow::Error>();
     let app = app::App::new(&config).inspect(|app| {
         // spawn rpc server
