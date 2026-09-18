@@ -1,13 +1,15 @@
 //! State errors
 #![allow(clippy::duplicated_attributes)]
 
+use std::path::PathBuf;
+
 use sneed::{db::error as db, env::error as env, rwtxn::error as rwtxn};
 use thiserror::Error;
 use transitive::Transitive;
 
 use crate::types::{
     AmountOverflowError, AmountUnderflowError, AssetId, BitAssetId, BlockHash,
-    Hash, M6id, MerkleRoot, OutPoint, Txid, WithdrawalBundleError,
+    Hash, M6id, MerkleRoot, OutPoint, Txid, Version, WithdrawalBundleError,
     transaction::error as transaction,
 };
 
@@ -362,6 +364,12 @@ pub enum Error {
     BorshSerialize(borsh::io::Error),
     #[error(transparent)]
     ComputeMerkleRoot(#[from] crate::types::ComputeMerkleRootError),
+    #[error(
+        "Incompatible DB version ({}). Please clear the DB (`{}`) and re-sync",
+        .version,
+        .db_path.display()
+    )]
+    IncompatibleVersion { version: Version, db_path: PathBuf },
     #[error(transparent)]
     ConnectWithdrawalBundleSubmitted(#[from] ConnectWithdrawalBundleSubmitted),
     #[error(transparent)]
