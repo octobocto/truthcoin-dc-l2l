@@ -1015,6 +1015,7 @@ pub fn disconnect(
 
 #[cfg(test)]
 mod test {
+    use crate::types::Coinbase;
     use std::collections::BTreeMap;
 
     use bitcoin::{
@@ -1272,18 +1273,19 @@ mod test {
     // connecting a deposit then disconnecting it on a reorg must round-trip
     #[test]
     fn deposit_reorg_round_trips() -> anyhow::Result<()> {
-        use crate::types::{
-            Body, Header, Transaction, proto::mainchain::Deposit,
-        };
+        use crate::types::{Body, Header, proto::mainchain::Deposit};
 
         let (_temp_dir, env, state) = fresh_state("deposit_reorg_round_trips")?;
         let empty_body = Body {
-            coinbase: Vec::new(),
+            coinbase: Coinbase::default(),
             transactions: Vec::new(),
             authorizations: Vec::new(),
         };
-        let no_txs: &[Transaction] = &[];
-        let merkle_root = Body::compute_merkle_root(&[], no_txs);
+        let merkle_root = Body::compute_merkle_root(
+            &Coinbase::default(),
+            Body::NO_FILLED_TXS,
+        )
+        .unwrap();
         let main0 = bitcoin::BlockHash::from_byte_array([10; 32]);
         let main1 = bitcoin::BlockHash::from_byte_array([11; 32]);
 

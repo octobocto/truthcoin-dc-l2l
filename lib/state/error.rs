@@ -361,6 +361,8 @@ pub enum Error {
     #[error(transparent)]
     BorshSerialize(borsh::io::Error),
     #[error(transparent)]
+    ComputeMerkleRoot(#[from] crate::types::ComputeMerkleRootError),
+    #[error(transparent)]
     ConnectWithdrawalBundleSubmitted(#[from] ConnectWithdrawalBundleSubmitted),
     #[error(transparent)]
     Db(Box<sneed::Error>),

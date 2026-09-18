@@ -184,8 +184,7 @@ fn connect_tip_(
 ) -> Result<(), Error> {
     let block_hash = header.hash();
     if tracing::enabled!(tracing::Level::DEBUG) {
-        let merkle_root =
-            Body::compute_merkle_root(&body.coinbase, &body.transactions);
+        let merkle_root = header.merkle_root;
         let height = state.try_get_height(rwtxn)?;
         state.apply_block(rwtxn, header, body)?;
         tracing::debug!(?height, %merkle_root, %block_hash, "connected body")

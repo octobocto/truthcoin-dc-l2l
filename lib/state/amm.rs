@@ -615,11 +615,12 @@ mod test {
             |lp_token_mint: u64| -> anyhow::Result<FilledTransaction> {
                 let res = FilledTransaction {
                     transaction: Transaction {
-                        inputs: vec![outpoint(10, 0), outpoint(11, 0)],
+                        inputs: vec![outpoint(10, 0), outpoint(11, 0)].into(),
                         outputs: vec![Output::new(
                             Address::ALL_ZEROS,
                             OutputContent::AmmLpToken(lp_token_mint),
-                        )],
+                        )]
+                        .into(),
                         memo: Vec::new(),
                         data: Some(TxData::AmmMint {
                             amount0: 2,
@@ -668,7 +669,7 @@ mod test {
         let lp_token_burn = 500_001;
         let burn_tx = FilledTransaction {
             transaction: Transaction {
-                inputs: vec![outpoint(12, 0)],
+                inputs: vec![outpoint(12, 0)].into(),
                 outputs: vec![
                     Output::new(
                         Address::ALL_ZEROS,
@@ -678,7 +679,8 @@ mod test {
                         Address::ALL_ZEROS,
                         OutputContent::BitAsset(500_001),
                     ),
-                ],
+                ]
+                .into(),
                 memo: Vec::new(),
                 data: Some(TxData::AmmBurn {
                     amount0: 500_001,

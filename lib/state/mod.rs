@@ -1073,10 +1073,11 @@ mod test {
         };
         let tx = FilledTransaction {
             transaction: Transaction {
-                inputs: vec![outpoint],
+                inputs: vec![outpoint].into(),
                 outputs: vec![
                     bitcoin_filled_output(Address::ALL_ZEROS, 1300).into(),
-                ],
+                ]
+                .into(),
                 ..Default::default()
             },
             spent_utxos: vec![withdrawal],
