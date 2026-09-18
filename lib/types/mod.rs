@@ -26,8 +26,8 @@ pub mod transaction;
 pub use address::Address;
 pub use bitasset_data::{BitAssetData, BitAssetDataUpdates, Update};
 pub use hashes::{
-    AssetId, BitAssetId, BlockHash, CoinbaseMerkleRoot, DutchAuctionId, Hash,
-    M6id, MerkleRoot, TxMerkleRoot, Txid,
+    AssetId, BitAssetId, BlockHash, CoinbaseMerkleRoot, CoinbaseTxid,
+    DutchAuctionId, Hash, M6id, MerkleRoot, TxMerkleRoot, Txid,
 };
 pub use keys::{EncryptionPubKey, VerifyingKey};
 pub(crate) use transaction::output::borsh_serialize_bitcoin_amount;
@@ -169,6 +169,19 @@ pub struct Header {
 }
 
 impl Header {
+    pub fn compute_coinbase_txid(&self) -> CoinbaseTxid {
+        let Self {
+            merkle_root,
+            prev_side_hash,
+            prev_main_hash,
+        } = self;
+        Coinbase::compute_txid(
+            merkle_root,
+            prev_main_hash,
+            prev_side_hash.as_ref(),
+        )
+    }
+
     pub fn hash(&self) -> BlockHash {
         hashes::hash_with_scratch_buffer(self).into()
     }
@@ -675,6 +688,29 @@ pub struct Coinbase {
 }
 
 impl Coinbase {
+    /// A coinbase txid hashes the merkle root of its block, the previous
+    /// mainchain hash, and the previous sidechain hash.
+    pub fn compute_txid(
+        merkle_root: &MerkleRoot,
+        prev_main_hash: &bitcoin::BlockHash,
+        prev_side_hash: Option<&BlockHash>,
+    ) -> CoinbaseTxid {
+        #[derive(BorshSerialize)]
+        struct HashComponents<'a> {
+            merkle_root: &'a MerkleRoot,
+            #[borsh(serialize_with = "borsh_serialize_bitcoin_block_hash")]
+            prev_main_hash: &'a bitcoin::BlockHash,
+            prev_side_hash: Option<&'a BlockHash>,
+        }
+
+        hashes::hash_with_scratch_buffer(&HashComponents {
+            merkle_root,
+            prev_main_hash,
+            prev_side_hash,
+        })
+        .into()
+    }
+
     /// Commitment to the memo and the outputs
     pub fn compute_merkle_root(
         &self,
@@ -1068,5 +1104,45 @@ mod block_wire_shape {
         assert!(json["header"].get("prev_main_hash").is_some());
         assert!(json["body"].get("transactions").is_some());
         assert!(json.get("prev_main_hash").is_none());
+    }
+}
+
+#[cfg(test)]
+mod coinbase_tests {
+    use bitcoin::hashes::Hash as _;
+
+    use super::{BlockHash, Coinbase, Header, MerkleRoot};
+
+    fn header(merkle_root: [u8; 32], main: u8, side: Option<u8>) -> Header {
+        Header {
+            merkle_root: MerkleRoot::from(merkle_root),
+            prev_side_hash: side.map(|b| BlockHash::from([b; 32])),
+            prev_main_hash: bitcoin::BlockHash::from_byte_array([main; 32]),
+        }
+    }
+
+    #[test]
+    fn coinbase_txid_binds_the_block_it_sits_in() {
+        let base = header([1; 32], 2, Some(3));
+        assert_eq!(
+            base.compute_coinbase_txid(),
+            Coinbase::compute_txid(
+                &base.merkle_root,
+                &base.prev_main_hash,
+                base.prev_side_hash.as_ref(),
+            )
+        );
+        for other in [
+            header([9; 32], 2, Some(3)),
+            header([1; 32], 9, Some(3)),
+            header([1; 32], 2, Some(9)),
+            header([1; 32], 2, None),
+        ] {
+            assert_ne!(
+                base.compute_coinbase_txid(),
+                other.compute_coinbase_txid(),
+                "{other:?} shares a coinbase txid with {base:?}"
+            );
+        }
     }
 }

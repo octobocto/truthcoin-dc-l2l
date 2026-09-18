@@ -19,8 +19,8 @@ use crate::{
         GetBitcoinValue,
         address::Address,
         hashes::{
-            self, AssetId, BitAssetId, DutchAuctionId, Hash, InputsMerkleRoot,
-            M6id, MerkleRoot, OutputsMerkleRoot, TxMerkleRoot, Txid,
+            self, AssetId, BitAssetId, CoinbaseTxid, DutchAuctionId, Hash,
+            InputsMerkleRoot, M6id, OutputsMerkleRoot, TxMerkleRoot, Txid,
         },
         serde_hexstr_human_readable,
     },
@@ -90,7 +90,7 @@ pub enum OutPoint {
     },
     // Created by block bodies.
     Coinbase {
-        merkle_root: MerkleRoot,
+        txid: CoinbaseTxid,
         vout: u32,
     },
     // Created by mainchain deposits.
@@ -108,8 +108,8 @@ impl std::fmt::Display for OutPoint {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Regular { txid, vout } => write!(f, "regular {txid} {vout}"),
-            Self::Coinbase { merkle_root, vout } => {
-                write!(f, "coinbase {merkle_root} {vout}")
+            Self::Coinbase { txid, vout } => {
+                write!(f, "coinbase {txid} {vout}")
             }
             Self::Deposit(bitcoin::OutPoint { txid, vout }) => {
                 write!(f, "deposit {txid} {vout}")
@@ -250,7 +250,7 @@ mod test {
                 vout: u32::MAX,
             },
             OutPoint::Coinbase {
-                merkle_root: Default::default(),
+                txid: Default::default(),
                 vout: u32::MAX,
             },
             OutPoint::Deposit(bitcoin::OutPoint {
