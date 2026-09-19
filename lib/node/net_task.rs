@@ -29,6 +29,7 @@ use super::{
 };
 use crate::{
     archive::{self, Archive},
+    authorization::BatchVerificationContext,
     mempool::MemPool,
     net::{
         self, Net, PeerConnectionError, PeerConnectionInfo,
@@ -83,7 +84,11 @@ fn relay_pending_transactions(
     let pending = mempool.take_all(&rwtxn)?;
     let mut valid = Vec::new();
     for transaction in pending {
-        match state.validate_transaction(&rwtxn, &transaction) {
+        match state.validate_transaction(
+            &rwtxn,
+            &net.batch_verification_ctxt,
+            &transaction,
+        ) {
             Ok(_) => valid.push(transaction),
             Err(error) if transaction_read_error(&error) => {
                 return Err(error.into());
@@ -173,9 +178,11 @@ impl From<net::Error> for Error {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn connect_tip_(
     rwtxn: &mut RwTxn<'_>,
     archive: &Archive,
+    batch_verification_ctxt: &BatchVerificationContext,
     mempool: &MemPool,
     state: &State,
     header: &Header,
@@ -186,10 +193,10 @@ fn connect_tip_(
     if tracing::enabled!(tracing::Level::DEBUG) {
         let merkle_root = header.merkle_root;
         let height = state.try_get_height(rwtxn)?;
-        state.apply_block(rwtxn, header, body)?;
+        state.apply_block(rwtxn, batch_verification_ctxt, header, body)?;
         tracing::debug!(?height, %merkle_root, %block_hash, "connected body")
     } else {
-        state.apply_block(rwtxn, header, body)?;
+        state.apply_block(rwtxn, batch_verification_ctxt, header, body)?;
     }
     let () = state.connect_two_way_peg_data(rwtxn, two_way_peg_data)?;
     let () = archive.put_header(rwtxn, header)?;
@@ -312,6 +319,7 @@ fn is_fatal_reorg_error(err: &Error) -> bool {
 fn reorg_to_tip<Tls>(
     env: &sneed::Env<Tls>,
     archive: &Archive,
+    batch_verification_ctxt: &BatchVerificationContext,
     mempool: &MemPool,
     state: &State,
     #[cfg(feature = "zmq")] zmq_pub_handler: &ZmqPubHandler,
@@ -442,6 +450,7 @@ fn reorg_to_tip<Tls>(
         let () = match connect_tip_(
             &mut rwtxn,
             archive,
+            batch_verification_ctxt,
             mempool,
             state,
             header,
@@ -968,6 +977,7 @@ impl NetTask {
             let _: bool = reorg_to_tip(
                 &ctxt.env,
                 &ctxt.archive,
+                &ctxt.net.batch_verification_ctxt,
                 &ctxt.mempool,
                 &ctxt.state,
                 #[cfg(feature = "zmq")]
@@ -1242,6 +1252,7 @@ impl NetTask {
                         reorg_to_tip(
                             &self.ctxt.env,
                             &self.ctxt.archive,
+                            &self.ctxt.net.batch_verification_ctxt,
                             &self.ctxt.mempool,
                             &self.ctxt.state,
                             #[cfg(feature = "zmq")]
@@ -1634,6 +1645,7 @@ mod peer_retry_test {
             std::collections::HashSet::new(),
             ValidatorClient::new(channel),
             None,
+            &mut rand::rng(),
             runtime,
             #[cfg(feature = "zmq")]
             (Ipv4Addr::LOCALHOST, 0).into(),
@@ -1680,7 +1692,7 @@ mod peer_retry_test {
                 .into(),
             ],
         );
-        Ok(wallet.authorize(transaction)?)
+        Ok(wallet.authorize(rand::rng(), transaction)?)
     }
 
     async fn wait_for_transaction(
@@ -1782,7 +1794,7 @@ mod peer_retry_test {
             node.submit_transaction(&transaction)?;
             let mut conflict = transaction.transaction.clone();
             conflict.outputs[0].memo = vec![1];
-            let conflict = wallet.authorize(conflict)?;
+            let conflict = wallet.authorize(rand::rng(), conflict)?;
             let result = node.broadcast_transaction(&conflict);
             assert!(matches!(
                 result,
@@ -1792,7 +1804,7 @@ mod peer_retry_test {
             ));
             let mut repeated = transaction.transaction.clone();
             repeated.inputs.push(repeated.inputs[0]);
-            let repeated = wallet.authorize(repeated)?;
+            let repeated = wallet.authorize(rand::rng(), repeated)?;
             assert!(node.broadcast_transaction(&repeated).is_err());
             assert_eq!(node.get_all_transactions()?.len(), 1);
             Ok(())
@@ -1938,6 +1950,7 @@ mod peer_retry_test {
                 runtime.handle(),
                 &source.env,
                 source.archive.clone(),
+                source.batch_verification_ctxt,
                 None,
                 Network::Regtest,
                 source.state.clone(),
@@ -2039,7 +2052,8 @@ mod peer_retry_test {
                 tokio::task::yield_now().await;
             }
             let (net, mut info, _dial_seeds) = crate::net::Net::new(
-                runtime.handle(), &source.env, source.archive.clone(), None,
+                runtime.handle(), &source.env, source.archive.clone(),
+                source.batch_verification_ctxt, None,
                 Network::Regtest, source.state.clone(),
                 (Ipv4Addr::LOCALHOST, 0).into(), Default::default(), Default::default(),
             )?;
@@ -2148,8 +2162,12 @@ mod peer_retry_test {
                         .into(),
                     ],
                 );
-                let tx = wallet.authorize(tx)?;
-                node.state.validate_transaction(&rwtxn, &tx)?;
+                let tx = wallet.authorize(rand::rng(), tx)?;
+                node.state.validate_transaction(
+                    &rwtxn,
+                    &node.batch_verification_ctxt,
+                    &tx,
+                )?;
                 Ok(tx)
             };
             let first_tx = make_tx(vec![inputs[0]], 900)?;

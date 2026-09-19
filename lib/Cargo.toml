@@ -23,10 +23,12 @@ borsh = { workspace = true, features = ["derive"] }
 byteorder = { workspace = true }
 bytes = { workspace = true }
 clap = { workspace = true, features = ["derive"], optional = true }
-ed25519-dalek = { workspace = true, features = ["batch", "serde"] }
+curve25519-dalek = { workspace = true, features = ["group", "serde"] }
 educe = { workspace = true, features = ["Clone", "Debug"] }
 error-fatality = { workspace = true }
 fallible-iterator = { workspace = true }
+frost-core = { workspace = true, features = ["internals"] }
+frost-ristretto255 = { workspace = true, features = ["serde"] }
 futures = { workspace = true, features = ["alloc"] }
 hashlink = { workspace = true, features = ["serde_impl"] }
 fraction = { workspace = true }
@@ -44,6 +46,7 @@ parking_lot = { workspace = true }
 prost = { workspace = true }
 prost-types = { workspace = true }
 quinn = { workspace = true }
+rand = { workspace = true, features = ["chacha"] }
 rayon = { workspace = true }
 rcgen = { workspace = true }
 rustls = { workspace = true, features = ["ring"] }
@@ -74,6 +77,7 @@ features = ["AES256-GCM", "ECIES-MAC", "HMAC-SHA256", "x25519"]
 
 [dev-dependencies]
 anyhow = { workspace = true }
+rand = { workspace = true, features = ["thread_rng"] }
 temp-dir = { workspace = true }
 tokio = { workspace = true, features = ["test-util"] }
 

@@ -416,7 +416,7 @@ pub enum Error {
     )]
     SecondLastOutputNotBitAsset,
     #[error(transparent)]
-    SignatureError(#[from] ed25519_dalek::SignatureError),
+    SignatureError(#[from] frost_ristretto255::Error),
     #[error("Too few BitAsset control coin outputs")]
     TooFewBitAssetControlOutputs,
     #[error(

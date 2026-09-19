@@ -334,7 +334,7 @@ impl MemPool {
 mod test {
     use super::MemPool;
     use crate::{
-        authorization::{self, SigningKey},
+        authorization,
         types::{FilledOutput, OutPoint, Transaction},
     };
 
@@ -343,8 +343,8 @@ mod test {
         let path = temp_dir::TempDir::new()?;
         let mut options = heed::EnvOpenOptions::new().read_txn_without_tls();
         options.map_size(16 * 1024 * 1024).max_dbs(MemPool::NUM_DBS);
-        let key = SigningKey::from_bytes(&[2; 32]);
-        let address = authorization::get_address(&key.verifying_key().into());
+        let key = authorization::test_signing_key(2);
+        let address = authorization::get_address(&(&key).into());
         let transaction = Transaction::new(
             vec![OutPoint::Regular {
                 txid: [3; 32].into(),
@@ -358,8 +358,11 @@ mod test {
                 .into(),
             ],
         );
-        let transaction =
-            authorization::authorize(&[(address, &key)], transaction)?;
+        let transaction = authorization::authorize(
+            rand::rng(),
+            &[(address, &key)],
+            transaction,
+        )?;
         let txid = transaction.transaction.txid();
         {
             let env = unsafe { sneed::Env::open(&options, path.path()) }?;

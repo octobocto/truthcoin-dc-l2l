@@ -285,7 +285,7 @@ pub mod mainchain {
         self, BlockHash, Network, OutPoint, Transaction, Txid, Work,
         hashes::Hash as _,
     };
-    use futures::{StreamExt as _, TryStreamExt as _, stream::BoxStream};
+    use futures::{StreamExt as _, stream::BoxStream};
     use hashlink::LinkedHashMap;
     use nonempty::NonEmpty;
     use serde::{Deserialize, Serialize};
@@ -872,6 +872,7 @@ pub mod mainchain {
                 prev_block_hash,
                 height,
                 work,
+                timestamp: _,
             } = header_info;
             let block_hash = block_hash
                 .as_ref()
@@ -1001,6 +1002,39 @@ pub mod mainchain {
     }
 
     pub struct EventStream;
+
+    #[derive(Clone, Debug)]
+    #[repr(transparent)]
+    pub struct BlockProducerClient<T>(
+        pub generated::block_producer_service_client::BlockProducerServiceClient<T>,
+    );
+
+    impl<T> BlockProducerClient<T>
+    where
+        T: super::Transport,
+    {
+        pub fn new(inner: T) -> Self {
+            Self(generated::block_producer_service_client::BlockProducerServiceClient::<T>::new(inner))
+        }
+
+        /// Give a withdrawal bundle to the block producer, which proposes it
+        /// as an M3.
+        pub async fn propose_withdrawal_bundle(
+            &mut self,
+            transaction: &Transaction,
+        ) -> Result<(), super::Error> {
+            let request = generated::ProposeWithdrawalBundleRequest {
+                sidechain_id: Some(THIS_SIDECHAIN as u32),
+                transaction: Some(bitcoin::consensus::serialize(transaction)),
+            };
+            let generated::ProposeWithdrawalBundleResponse {} = self
+                .0
+                .propose_withdrawal_bundle(request)
+                .await?
+                .into_inner();
+            Ok(())
+        }
+    }
 
     #[derive(Clone, Debug)]
     #[repr(transparent)]
@@ -1140,8 +1174,10 @@ pub mod mainchain {
             &mut self,
         ) -> Result<ChainInfo, super::Error> {
             let request = generated::GetChainInfoRequest {};
-            let generated::GetChainInfoResponse { network } =
-                self.0.get_chain_info(request).await?.into_inner();
+            let generated::GetChainInfoResponse {
+                network,
+                bip300_constants: _,
+            } = self.0.get_chain_info(request).await?.into_inner();
             let network = generated::Network::try_from(network)
                 .map_err(|_| super::Error::UnknownEnumTag {
                     field_name: "network".to_owned(),
@@ -1224,22 +1260,6 @@ pub mod mainchain {
             )
         }
 
-        pub async fn broadcast_withdrawal_bundle(
-            &mut self,
-            transaction: &Transaction,
-        ) -> Result<(), super::Error> {
-            let request = generated::BroadcastWithdrawalBundleRequest {
-                sidechain_id: Some(THIS_SIDECHAIN as u32),
-                transaction: Some(bitcoin::consensus::serialize(transaction)),
-            };
-            let generated::BroadcastWithdrawalBundleResponse {} = self
-                .0
-                .broadcast_withdrawal_bundle(request)
-                .await?
-                .into_inner();
-            Ok(())
-        }
-
         pub async fn create_bmm_critical_data_tx(
             &mut self,
             value_sats: u64,
@@ -1309,24 +1329,6 @@ pub mod mainchain {
                 >("address", &address)
             })?;
             Ok(address)
-        }
-
-        pub async fn generate_blocks(
-            &mut self,
-            blocks: u32,
-        ) -> Result<(), super::Error> {
-            let request = generated::GenerateBlocksRequest {
-                blocks: Some(blocks),
-                ack_all_proposals: true,
-            };
-            let _resp: Vec<generated::GenerateBlocksResponse> = self
-                .0
-                .generate_blocks(request)
-                .await?
-                .into_inner()
-                .try_collect()
-                .await?;
-            Ok(())
         }
     }
 }

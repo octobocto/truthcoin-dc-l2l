@@ -19,6 +19,7 @@ use tracing::instrument;
 
 use crate::{
     archive::Archive,
+    authorization::BatchVerificationContext,
     state::State,
     types::{
         AuthorizedTransaction, Network, VERSION, Version,
@@ -278,6 +279,7 @@ pub struct DialSeedsHandle(
 pub struct Net {
     pub server: Endpoint,
     archive: Archive,
+    pub(crate) batch_verification_ctxt: BatchVerificationContext,
     pub dns_resolver: Arc<TokioResolver>,
     magic_bytes: peer_message::MagicBytes,
     state: State,
@@ -416,6 +418,7 @@ impl Net {
         let connection_ctxt = PeerConnectionCtxt {
             env,
             archive: self.archive.clone(),
+            batch_verification_ctxt: self.batch_verification_ctxt,
             magic_bytes: self.magic_bytes,
             resolved_address: resolved_addr,
             state: self.state.clone(),
@@ -525,6 +528,7 @@ impl Net {
         runtime: &tokio::runtime::Handle,
         env: &sneed::Env<heed::WithoutTls>,
         archive: Archive,
+        batch_verification_ctxt: BatchVerificationContext,
         magic_bytes_override: Option<peer_message::MagicBytes>,
         network: Network,
         state: State,
@@ -561,6 +565,7 @@ impl Net {
         let net = Net {
             server,
             archive,
+            batch_verification_ctxt,
             dns_resolver,
             magic_bytes,
             state,
@@ -674,6 +679,7 @@ impl Net {
         let connection_ctxt = PeerConnectionCtxt {
             env,
             archive: self.archive.clone(),
+            batch_verification_ctxt: self.batch_verification_ctxt,
             magic_bytes: self.magic_bytes,
             resolved_address: addr.into(),
             state: self.state.clone(),
@@ -825,6 +831,7 @@ mod peer_handle_test {
     };
     use crate::{
         archive::Archive,
+        authorization::BatchVerificationContext,
         state::State,
         types::{
             Network,
@@ -874,6 +881,7 @@ mod peer_handle_test {
             &tokio::runtime::Handle::current(),
             &env,
             archive,
+            BatchVerificationContext::new(&mut rand::rng()),
             None,
             Network::Regtest,
             state,
@@ -1141,6 +1149,7 @@ mod peer_handle_test {
         let connection_ctxt = PeerConnectionCtxt {
             env,
             archive: net.archive.clone(),
+            batch_verification_ctxt: net.batch_verification_ctxt,
             magic_bytes: net.magic_bytes,
             resolved_address: addr.into(),
             state: net.state.clone(),
